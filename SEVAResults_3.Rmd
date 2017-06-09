@@ -1,0 +1,1008 @@
+---
+title: "Supplement: Splice Expression Variation Analysis (SEVA): Variability Analysis to Detect Significant Alternative Splicing Events"
+author: "Bahman Afsari"
+date: "Sunday, June 12, 2016"
+output: 
+  pdf_document: 
+    number_sections: yes
+---
+
+# Preperations {.tabset}
+
+## Loading Library
+First, we load the libraries: 
+```{r libraries,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+library('Homo.sapiens')
+library('org.Hs.eg.db')
+library('GenomicRanges')
+library("GSReg")
+library(EBSeq)
+library(limma)
+library('gplots')
+library('ROCR')
+library(Matrix)
+
+sessionInfo()
+```
+
+## Loading Data Joe's Data:
+
+
+```{r loading_data,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+source("../Scripts/functions.R") #loading the functions for analysis
+
+### loading Joe's data
+
+
+## loading gene expression of Joe data
+load("../Data/JoeData/CalifanoHPVOP_RSEM_28Jul2014.RDa")
+
+### loading junction expression data
+load("../Data/JoeData/juncRPM.rda")
+
+# loading isoform expression
+load("../Data/JoeData/isoforms.rda")
+
+
+
+#loading the map of the isoform names to genes
+load("../Results/Simulation/SecondTryJan13/isos2genesvect.rda")
+```
+
+Now, we preprocess data to get the sample phenotypes from the data:
+```{r preprocessing_real_data,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+# Normal Samples Names
+NormalSamp <- pheno[which(pheno["classes"]=="Normal"),"junctionSample"]
+# Tumor Samples Names
+TumorSamp <- pheno[which(pheno["classes"]=="Tumor"),"junctionSample"]
+
+# Generating a vector maps the sample names to phenotypes
+phenoVect <- c(rep(x= "Normal",length(NormalSamp)),rep(x="Tumor",length(TumorSamp)))
+names(phenoVect) <- c(NormalSamp,TumorSamp)
+
+#gene exp removing duplicated names
+geneexp <- HPVOPRSEMData[which(duplicated(sapply(strsplit(rownames(HPVOPRSEMData),
+                                                          split = "[|]"),
+                                                 FUN = function(x) x[[1]]))==F),] 
+#correct colname (Sample) name
+colnames(geneexp) <- gsub(pattern = "[.]",replacement = "-" ,
+                          x = sapply(strsplit(colnames(HPVOPRSEMData),split = "_"),
+                                     function(x) x[2]))
+#correct gene names
+rownames(geneexp)<- sapply(strsplit(rownames(geneexp),split = "[|]"),
+                           FUN = function(x) x[[1]])
+
+#gene expression of only phenoVect
+geneexp <- geneexp[,names(phenoVect)]
+
+#logscale geneexp
+loggeneExp <- log2(geneexp+1)
+```
+
+# Generating subplots for Figure 2
+
+We studied genes from a previous study. We calculated the modified Kendall-tau distance only on those genes and we plotted MDS to visualize the samples.  
+```{r MDS_plots,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,mesbage=FALSE,fig.show='asis',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+# Genes from PLOS one paper I. Smith et al from 2013 PLoS one 
+# Coordinated Activation of Candidate Proto-Oncogenes 
+# and Cancer Testes Antigens via Promoter Demethylation 
+# in Head and Neck Cancer and Lung Cancer
+
+GenestoStudy <- c("VEGFC","DST","LAMA3","SDHA","TP63","RASIP1")
+
+## Find the overlaps for all junctions.
+z <-  GSReg.overlapJunction(juncExprs = junc.RPM,
+                              GenestoStudy = GenestoStudy)
+MyRest <- z$Rest
+
+## Tumor Samples
+TumorSamp <- pheno[which(pheno[,"classes"]=="Tumor"),"junctionSample"]#Tumor samples
+NormSamp <- pheno[which(pheno[,"classes"]=="Normal"),"junctionSample"]#Normal samples
+
+### only Tumor and Normal samples
+junc.RPM.NT <- cbind(junc.RPM[,TumorSamp],junc.RPM[,NormSamp])#only tumor and normal
+
+for( i in seq_along(GenestoStudy)){
+  GenetoStudy <- GenestoStudy[i]
+  GeneRestMat <- MyRest[[GenetoStudy]]
+
+  # calculating the distance 
+  dist <- GSReg.kendall.tau.distance.restricted(
+                            V = junc.RPM.NT[rownames(GeneRestMat),],
+                            RestMat = GeneRestMat)
+  
+  
+  # Calculating the mds plot
+  fit <- cmdscale(dist,eig=TRUE, k=2) # k is the number of dim
+   
+  # coordinations
+  x <- fit$points[,1]
+  y <- fit$points[,2]
+  
+  # plotting mds
+  plot(x = x[TumorSamp], y = y[TumorSamp],
+       xlab="Coordinate 1", ylab="Coordinate 2", 
+       xlim =range(x),ylim = range(y),
+       main= GenetoStudy,	type="p", col = 'red',pch = 17)
+  
+  lines(x[NormSamp], y[NormSamp],   main=GenetoStudy,	type="p", col="blue", pch = 16)
+  maxdist <- max(dist[c(NormSamp,TumorSamp),c(NormSamp,TumorSamp)])
+  breaks = seq(0,1,length.out=1000)
+  gradient1 = colorpanel( sum( breaks[-1]<= 0.4 ), "green", "black" )
+  gradient2 = colorpanel( sum( breaks[-1]> 0.4 ), "black", "red" )
+  hm.colors = c(gradient1,gradient2)
+  
+  ## heatmap of distances
+  heatmap.2(x = dist[c(NormSamp,TumorSamp),c(NormSamp,TumorSamp)]/maxdist, main = GenetoStudy,
+            Rowv = FALSE, Colv = FALSE, 
+            colsep= length(NormSamp)+1,
+            rowsep = length(NormSamp)+1,
+            sepcolor = "white",
+            sepwidth = c(0.3,0.3),
+            RowSideColors = c(rep("blue",length(NormSamp)),rep("red",length(TumorSamp))),
+            ColSideColors = c(rep("blue",length(NormSamp)),rep("red",length(TumorSamp))),
+            dendrogram = "none",scale="none",
+            na.rm = T,col = hm.colors,
+            labRow = "",labCol = "",trace="none")
+ 
+  
+  
+  legend("topright",      # location of the legend on the heatmap plot
+         legend = c("Normal", "Tumor"), # category labels
+         col = c("blue", "red"),  # color key
+         text.col = c("blue", "red"),  # color key
+         lty= 0,             # line style
+         pch = c(16,17)           # line width
+  )
+}
+rm(list="junc.RPM.NT")
+```
+
+# Generating Figures 4 and Table 1
+First, we define the functions to find differential expression genes
+```{r DE_genes,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+### DEgenes
+findDEGenes <- function(geneexp,phenoVect,pvaluecorrected=0.01){
+  geneexpr <- as.matrix(geneexp)
+
+  Sizes = MedianNorm(geneexpr)
+  EBOut = EBTest(Data = geneexpr,
+               Conditions = as.factor(phenoVect),
+               sizeFactors = Sizes, maxround = 5)
+
+
+  PP = GetPPMat(EBOut)
+  DEGenes_EBesq <- as.character(names(which(PP[,"PPDE"]>1-pvaluecorrected)))
+  return(list(DEGenes_EBesq=DEGenes_EBesq,pvaluescorrected=PP[,"PPDE"]))
+}
+
+```
+
+Also, we write a wrapper for differential splicing algorithm using EBSeq: 
+```{r DSEBSEQ_genes,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+### EBSEQ isoform DS
+findDSEBSEQ<-function(isos,phenoVect, isos2genesvectsimplified, pvaluecorrected= 0.05 )
+{
+  isoexpressed <- names(which(apply(isos,MARGIN = 1, FUN = sum)>0.0000001))
+  Sizes = MedianNorm(isos[isoexpressed,])
+  IsoEBOut = EBTest(Data = isos[isoexpressed,],
+                    Conditions = as.factor(phenoVect),
+                    sizeFactors = Sizes, maxround = 5)
+  
+  
+  PPISO = GetPPMat(IsoEBOut)
+  ebseqpvalueGenes <- tapply(  X = PPISO[,"PPDE"] ,
+                               INDEX = isos2genesvectsimplified[rownames(PPISO)],
+                               FUN = function(x) mean(x,na.rm=T))
+  DSEBseq <- names(which(ebseqpvalueGenes>1-pvaluecorrected))
+  return(list(DSEBseq=DSEBseq, pvaluescorrected=ebseqpvalueGenes))
+  
+}
+```
+
+Now, we use EBSeq to find differential splicing.
+```{r EBSeq_analysis,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+#finding DE genes
+DEGenes_EBesq_outcome <- findDEGenes(geneexp = geneexp,phenoVect=phenoVect)
+DEGenes_EBesq <- DEGenes_EBesq_outcome$DEGenes_EBesq
+
+## EBSeq requires isoforms
+samplesIsos <- intersect(names(phenoVect),colnames(isos))## we do not have all isos expression in all genes
+isos2genesvectsimplified <- sapply(strsplit(isos2genesvect,split = '[|]'),FUN = function(x) x[1]) 
+
+## EBSeq for Differential Splicing
+DSEBseq_outcome <- findDSEBSEQ(isos[,samplesIsos], ### DSEBSEQ 
+                               as.factor(phenoVect)[samplesIsos],
+                               isos2genesvectsimplified = isos2genesvectsimplified)
+DSEBseq_Genes <- DSEBseq_outcome$DSEBseq
+
+
+### Make the Venn matrix with EBSEQ and DiffSplice for further application
+
+
+VennMatrix <- matrix(data=0,ncol = 4,nrow= nrow(geneexp),
+                     dimnames = list(rownames=rownames(geneexp),colnames=c("DE","SEVA","EBSEQ","DiffSplice")))
+
+VennMatrix[DEGenes_EBesq,"DE"] <- 1# DE genes
+VennMatrix[intersect(rownames(VennMatrix),DSEBseq_Genes),"EBSEQ"] <- 1 #EBSEQ genes
+```
+
+DiffSplice analysis takes a longer time and requires more resources to run. So, we have applied it seperately and we load its outcome. 
+```{r DiffSplice_analysis,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',fig.keep='all',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+
+### loading genes 
+gn <- genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+gSymbol <- select(org.Hs.eg.db,keys=as.character(gn$gene_id),
+                  columns=c('SYMBOL'),keytype='ENTREZID')
+gn$SYMBOL <- gSymbol$SYMBOL
+
+#Read the DiffSplice genes (the analysis has been done in a different computer)
+diffsplicefile <- read.csv("../Data/JoeData/differential_transcription_sig.csv")
+
+junctionsDiffSplice <- GRanges(seqnames = Rle(diffsplicefile[,"chromosome"]), 
+                               ranges = IRanges(
+                                 start = as.numeric(diffsplicefile[,"position_start"]),
+                                 end = as.numeric(diffsplicefile[,"position_end"])))
+
+DiffSplicehits <- findOverlaps(junctionsDiffSplice,gn)
+DiffSplicegenes <- unique(gn$SYMBOL[subjectHits(DiffSplicehits)])
+VennMatrix[intersect(rownames(VennMatrix),DiffSplicegenes),"DiffSplice"] <- 1
+
+
+##################################### END of DE, EBSEQ and DiffSplice
+```
+
+Now, we apply the SEVA analysis for the genes:
+
+```{r SEVA_analysis,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+### Applying SEVA
+geneexpr <- as.matrix(geneexp)
+
+junctionPValue <- GSReg.SEVA(juncExprs=junc.RPM,
+                              phenoVect=as.factor(phenoVect),
+                             verbose = F,
+                              geneexpr=geneexpr)
+
+
+#SEVA pvalue
+SEVApvaluePure <- sapply(junctionPValue,FUN =  function(x) x$pvalue)
+#Bonferonni correction
+SEVAGenesPure <- names(which(SEVApvaluePure<0.01/length(junctionPValue)))
+save(list=ls(),file = "../Cache/SEVAJoe.rda")
+```
+
+
+Plotting Figure 4:
+```{r Figure4,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',fig.keep='all',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+
+#dispersions
+E1 <- sapply(junctionPValue,FUN = function(x) x$E1)
+E2 <- sapply(junctionPValue,FUN = function(x) x$E2)
+
+
+### plot variation diagram and if VennMatrix is available it plots venn diagram as well
+#Venn columns must be DE, EBSEQ, DiffSplice and SEVA
+plotVariation <- function(ENormal,ETumor,
+                          DSgenes,mainname = deparse(substitute(DSgenes)),
+                          VennMatrix){
+  #mainname with number of identified genes with higher variation in tumore and in cancer
+  if(missing(VennMatrix)){
+    AllGenes <- names(ENormal)
+  }else{
+    AllGenes <- intersect(names(ENormal),rownames(VennMatrix))
+  }
+  
+  DSgenesIntersect <- intersect(AllGenes,DSgenes)
+  
+  mainename_variation_count <- paste0(mainname, " # Tumor>[Normal>]", #main naime
+                                      sum(ETumor[DSgenesIntersect] > ENormal[DSgenesIntersect]), "[",# gene number with higher variation in tumor
+                                      sum(ETumor[DSgenesIntersect] < ENormal[DSgenesIntersect]), "]") # gene number with higher variation in cancer
+  
+  
+  
+  
+  Erange <- range(c(ENormal,ETumor)) #range of variation
+  plot(x=ENormal[setdiff(names(ENormal),DSgenesIntersect)], #plot non-DS
+       y=ETumor[setdiff(names(ETumor),DSgenesIntersect)], main = mainename_variation_count,
+       col="light blue", xlab = "Normal Variation", ylab="Tumor Variation",
+       xlim = Erange,ylim = Erange,pch = 18)
+  lines(x=ENormal[DSgenesIntersect],y=ETumor[DSgenesIntersect], #plot DS
+        col="dark red",type = "p",pch = 19)
+  lines(x=Erange,y=Erange,col="black",type = "l", lty = 2,lwd = 2) #45 degree line
+  legend("topleft", legend = c("DS", "non-DS"),pch = c(20,18), #legend
+         col = c("dark red","light blue"),
+         text.col = c("dark red","light blue"))
+  
+  if(!missing(VennMatrix)){
+    VennMatrixCopy <- VennMatrix
+    VennMatrixCopy[,"SEVA"] <- 0
+    VennMatrixCopy[DSgenesIntersect,"SEVA"] <- 1
+    vennDiagram(VennMatrixCopy[,c("SEVA","EBSEQ","DE")])
+    vennDiagram(VennMatrixCopy[,c("SEVA","DiffSplice","DE")])  
+  }
+  
+}
+
+
+
+pdf(file = "Figure4.pdf")
+plotVariation(ENormal = E1,ETumor = E2, DSgenes = SEVAGenesPure,VennMatrix = VennMatrix)
+dev.off()
+
+
+
+
+plotVariation(ENormal = E1,ETumor = E2, DSgenes = SEVAGenesPure,VennMatrix = VennMatrix)
+
+
+```
+
+Now, we generate Table 1, i.e. the six genes corrected p-values from the previous study:
+
+```{r Table1_OldIdentifiedGenes,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+### Genes to study from PLoS one paper
+GenestoStudy <- c("VEGFC","DST","LAMA3","SDHA","TP63","RASIP1")
+#EVA without correction
+print("SEVA (without correction)")
+print(sapply(SEVApvaluePure[GenestoStudy],FUN = function(x) x))
+print("SEVA (with correction)")
+print(sapply(SEVApvaluePure[GenestoStudy]*length(GenestoStudy),FUN = function(x) min(c(x,1))))
+
+cat("Genes survive the 0.01 threshold (Bon-feronni corrected)",
+    names(which(SEVApvaluePure[GenestoStudy]<0.01/length(GenestoStudy))))
+
+DSEBSeqOnlyGenesofStudy <- names(isos2genesvectsimplified)[which(isos2genesvectsimplified %in% GenestoStudy)]
+
+DSEBseq_outcome_GenesofStudy <- findDSEBSEQ(isos[DSEBSeqOnlyGenesofStudy,samplesIsos], ### DSEBSEQ 
+                               as.factor(phenoVect)[samplesIsos],
+                               isos2genesvectsimplified = isos2genesvectsimplified)
+
+cat("Genes survive the 0.01 threshold (EBSeq)",
+    names(which(DSEBseq_outcome_GenesofStudy$pvaluescorrected>0.99)))
+
+print("EBSeq p-value")
+print(1-DSEBseq_outcome_GenesofStudy$pvaluescorrected)
+### Free some memory
+print("Genes of interest identified by DiffSplice: (TRUE found and FALSE not identified)")
+print(GenestoStudy)
+print(GenestoStudy %in% DiffSplicegenes)
+
+save(list=c("junctionPValue","SEVAGenesPure","VennMatrix"),file = "../Cache/ForTCGAAnalysis.rda")
+
+```
+
+4. Cross-study Validation with TCGA
+
+Now, we cross-study the genes we identified in TCGA. 
+```{r TCGA_SEVA_Cross_study,eval=FALSE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+
+rm(list="junc.RPM")
+gc()
+
+TCGA.RSEM <- as.matrix(TCGA.RSEM)
+
+# junctionPValueTCGA <- SEVA.meangeneFilter(juncExprs=junc.RPM.TCGA,
+#                                           phenoVect=phenoVect.TCGA,
+#                                           geneexpr=TCGA.RSEM,
+#                                           minmeanloggeneexp= 3,
+#                                           GenestoStudy = intersect(SEVAGenesPure,
+#                                                                    rownames(TCGA.RSEM)))
+
+junctionPValueTCGA <- GSReg.SEVA(juncExprs=junc.RPM.TCGA,
+                                phenoVect=as.factor(phenoVect.TCGA),
+                                verbose = F,
+                                geneexpr=TCGA.RSEM,
+                                minmeanloggeneexp= 3,
+                                      GenestoStudy = intersect(SEVAGenesPure,
+                                                                   rownames(TCGA.RSEM)))
+
+#Only consider the genes both analyzed in TCGA and Joe Data
+SEVATCGAGenes <- intersect(names(junctionPValueTCGA),
+                                      SEVAGenesPure)
+
+tcgapval <- sapply(junctionPValueTCGA[SEVATCGAGenes],function(x) x$pvalue)
+
+cat("percentage that survived", 
+    mean(tcgapval[SEVATCGAGenes] <0.01/length(tcgapval)))
+
+
+
+
+
+hist(x = tcgapval, 
+     xlab="P-Value",main="P-Value from TCGA for SEVA Identified")
+
+
+
+
+cat("Quatile of the p-value distribution SEVA genes using TCGA data")
+print(quantile(tcgapval))
+```
+
+Now, checking a random set genes.
+```{r TCGA_SEVA_Cross_study_randomgenes,eval=FALSE,echo=TRUE,cache=FALSE,warning=FALSE,mesbage=FALSE,fig.show='asis',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+
+
+
+originaldatapval <- sapply(junctionPValue,function(x) x$pvalue)
+
+plot(originaldatapval[names(tcgapval)],
+     tcgapval,
+     ylab="Based on original data",
+     xlab= "Based on TCGA",
+     main="Cross-study P-Values")
+
+
+hist(x = originaldatapval, 
+     xlab="P-Value",main="P-Value from original data")
+
+
+
+
+
+set.seed(1)
+randomgenes <- sample(names(junctionPValue),size = length(SEVATCGAGenes))
+
+
+
+# junctionPValueRandom <- SEVA.meangeneFilter(juncExprs=junc.RPM.TCGA,
+#                                           phenoVect=phenoVect.TCGA,
+#                                           geneexpr=TCGA.RSEM,
+#                                           minmeanloggeneexp= 3,
+#                                           GenestoStudy = randomgenes)
+
+
+junctionPValueRandom <- GSReg.SEVA(juncExprs=junc.RPM.TCGA,
+                                          phenoVect=as.factor(phenoVect.TCGA),
+                                          geneexpr=TCGA.RSEM,
+                                          verbose = F,
+                                          minmeanloggeneexp= 3,
+                                          GenestoStudy = randomgenes)
+randompvalue <- sapply(junctionPValueRandom,FUN = function(x) x$pvalue)
+cat("Quatile of the p-value distribution random genes using TCGA data")
+print(quantile(randompvalue))
+
+print(wilcox.test(x=tcgapval,y=randompvalue,alternative = "less"))
+
+z <- c(tcgapval,randompvalue)
+print(cor.test(z,originaldatapval[names(z)],method = "spearman"))
+
+save(list=ls(),file = "C:/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Cache/SEVATCGA.rda")
+```
+
+3. Generating Figure 3
+
+First, we load aligned simulated isofrom, junction, gene expression data. Since simulating requires more computational power than a laptop. 
+
+```{r load_simulated_data,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+### plotting a data figures.
+load("../Results/Simulation/FourthTryFeb5/VennInf_functionR.rda")
+
+#loading data
+load("../Results/Simulation/SecondTryJan13/juncRPMExp.Rdata")
+#loading groundtruth
+load("../Results/Simulation/SecondTryJan13/groundtruthSimplified.rda")
+#isos 2 gene names
+load("../Results/Simulation/SecondTryJan13/isos2genesvect.rda")
+#load the percentages 
+load("../Results/Simulation/PercentageData/PercentageDataFinal.rda")
+
+myisoforms <- names(which(isos2genesvectsimplified == names(neutralgenes)[3] ))[1:4]
+```
+No, we choose one of the genes and apply the processes in the simulation parts.
+
+```{r Figure3_a_d_oneGeneSimulation,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',dev=c('pdf', 'png'),fig.width=7, fig.height=7}
+PerturbedNum <- 15
+
+neutralmat <- log2(isoexprext[myisoforms,1:50]+1)
+pdf(file = "Neutral.pdf",width = 7,height=7)
+matplot(t(neutralmat), main="Neutral (Not affected gene)",
+        pch = c(10,11,12,13),lty=2,lwd = 1, type= "b",xaxt= "n",
+        xlab = "Samples",
+        ylab = "isoform expression (log2)")
+lines(x=c(25.5,25.5),y=c(0,10),type = "l",lty =5, lwd =3)
+#lines(x=c(50.5-PerturbedNum,50.5-PerturbedNum),y=c(0,10),type = "l",lty =3, lwd =1)
+axis(side = 1,at = c(15,35),labels = c("Normal", "Cancer"))
+dev.off()
+
+pdf(file = "DS.pdf",width = 7,height=7)
+DSmat <- neutralmat
+MyPermutation <- c(3,4,2,1)
+DSmat[,-(1:(ncol(DSmat)-PerturbedNum))] <- DSmat[MyPermutation ,
+                                                 -(1:(ncol(DSmat)-PerturbedNum))]
+
+matplot(t(DSmat), main="Differentially  Spliced (DS) gene",
+        pch = c(10,11,12,13),lty=2,lwd = 1, type= "b",xaxt= "n",
+        xlab = "Samples",
+        ylab = "isoform expression (log2)")
+lines(x=c(25.5,25.5),y=c(0,10),type = "l",lty =5, lwd =3)
+lines(x=c(50.5-PerturbedNum,50.5-PerturbedNum),y=c(0,10),type = "l",lty =6, lwd =1)
+axis(side = 1,at = c(15,30, 43),labels = c("Normal", "non-disrupted\n Cancer","disrupted\n Cancer"))
+dev.off()
+
+
+DEmat <- neutralmat
+DEmat[,-(1:(ncol(DSmat)-PerturbedNum))] <- DEmat[,-(1:(ncol(DSmat)-PerturbedNum))]+1
+         
+pdf(file = "DEonly.pdf",width = 7,height=7)                                        
+matplot(t(DEmat), main= "Differentially Expressed (DE) gene",
+        pch = c(10,11,12,13),lty=2,lwd = 1, type= "b",xaxt= "n",
+        xlab = "Samples",
+        ylab = "isoform expression (log2)")
+lines(x=c(25.5,25.5),y=c(0,10),type = "l",lty =5, lwd =3)
+lines(x=c(50.5-PerturbedNum,50.5-PerturbedNum),y=c(0,10),type = "l",lty =6, lwd =1)
+axis(side = 1,at = c(15,30, 43),labels = c("Normal", "non-disrupted\n Cancer","disrupted\n Cancer"))
+dev.off()
+
+DEDSmat <- DSmat
+DEDSmat[,-(1:(ncol(DSmat)-PerturbedNum))] <- DEDSmat[ ,
+                                                 -(1:(ncol(DSmat)-PerturbedNum))]+1
+pdf(file = "DS-DE.pdf",width = 7,height=7)
+matplot(t(DEDSmat), main =" DS-DE gene",
+        pch = c(10,11,12,13),lty=2,lwd = 1, type= "b",xaxt= "n",
+        xlab = "Samples",
+        ylab = "isoform expression (log2)")
+lines(x=c(25.5,25.5),y=c(0,10),type = "l",lty =5, lwd =3)
+lines(x=c(50.5-PerturbedNum,50.5-PerturbedNum),y=c(0,10),type = "l",lty =6, lwd =1)
+axis(side = 1,at = c(15,30, 43),labels = c("Normal", "non-disrupted\n Cancer","disrupted\n Cancer"))
+dev.off()
+
+```
+
+
+
+Now, we generate the last two figures 3. First, we load the ground truth:
+
+```{r loading_groundtruthlabels,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+#### gene type
+DEDSGenes <- names(DEDS)
+DEnonDSGenes <- names(DEnonDS)
+nonDEDSGenes <- names(nonDEDS)
+neutralgenes <- names(neutralgenes)
+### DSgenes
+DSGenes <- union(DEDSGenes, nonDEDSGenes)
+#DEGenes
+DEGenes <- union(DEDSGenes, DEnonDSGenes)
+OnlyGenesGroundTruth <- union(union(DEDSGenes,nonDEDSGenes),union(DEnonDSGenes,neutralgenes))
+```
+
+
+We generate labels for simulated data:
+```{r generate_labels_simulateddata,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+#PHENOTYPES
+phenotypes <- as.numeric(sapply(strsplit(colnames(junc.RPM),split = "_"),function(x) x[2]))<=25
+
+names(phenotypes) <- colnames(junc.RPM)
+
+#Tumor and Normal Sample names
+TumorSamples <- names(which(phenotypes==TRUE))
+NormalSamples <- names(which(phenotypes==FALSE))
+
+
+#Median of median expression
+medT <- log2(apply(X = geneexpr[,TumorSamples],MARGIN = 1, FUN = median)+1)
+medN <- log2(apply(X = geneexpr[,NormalSamples],MARGIN = 1, FUN = median)+1)
+```
+
+Preprocessing of the simulated data:
+```{r preprocessing_simulateddata,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+
+#Filtering genes 
+#genes_withfoldchange <- names(which(abs(medT-medN)>1))
+
+#GeneMat.small <- geneExp[genes_withfoldchange,]
+genesCHR1 <- names(which(apply(geneexpr,MARGIN = 1,sum)>0))
+genesChr1 <- sapply(strsplit(genesCHR1,split = "[|]"),function(x) x[1])
+
+
+DEGenes_EBesq_outcome <- findDEGenes(geneexp = geneexpr,phenoVect=as.factor(phenotypes))
+DEGenes_EBesq <- sapply(strsplit(DEGenes_EBesq_outcome$DEGenes_EBesq,"[|]"),FUN = function(x) x[1])
+
+
+isos2genesvectsimplified <- sapply(strsplit(isos2genesvect,split = '[|]'),FUN = function(x) x[1]) 
+```
+
+EBSeq analysis for simulated data:
+```{r EBSEQ_simulateddata,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+
+DSEBseq_outcome <- findDSEBSEQ(isoexpr, ### DSEBSEQ 
+                               as.factor(phenotypes),
+                               isos2genesvectsimplified = isos2genesvectsimplified)
+DSEBseq <- intersect(DSEBseq_outcome$DSEBseq,genesChr1)
+
+```
+
+SEVA analysis for simulated data:
+```{r SEVA_simulateddata,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',fig.keep='all',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+
+###SEVA #################################
+
+#geneexpr <- as.matrix(geneexp)
+### simplify gene expression names and remove duplicated genes
+exprsimiplifiednames <- sapply(strsplit(rownames(geneexpr),split = "[|]"),FUN = function(x) x[1])
+notduplicatedgenes <- which(!duplicated(exprsimiplifiednames))#not duplicatred genes
+geneexp <- geneexpr[notduplicatedgenes,]#removing duplicated genes
+rownames(geneexp)<- exprsimiplifiednames[notduplicatedgenes]
+
+
+#SEVA pvalue calculation
+#junctionPValue <- SEVA.meangeneFilter(juncExprs=junc.RPM,phenoVect=as.factor(phenotypes),
+#                                geneexpr=geneexp,minmeanloggeneexp= 0)
+
+junctionPValue <- GSReg.SEVA(juncExprs=junc.RPM,
+                             phenoVect=as.factor(phenotypes),
+                             verbose = F,
+                             geneexpr=geneexp,minmeanloggeneexp= 0)
+
+
+SEVA <- names(which(sapply(junctionPValue,function(x) x$pvalue)<0.01))
+
+
+# SEVA <- names(which((apply(rbind(sapply(junctionPValue,function(x) x$pvalue),
+#                                   sapply(junctionPValue,function(x) x$pvalueD12D1),
+#                                   sapply(junctionPValue,function(x) x$pvalueD12D2)),MARGIN = 2,min))<0.01/3))
+
+VennDiag <- matrix(0,nrow = length(genesChr1),ncol = 5, 
+                   dimnames = list(genesChr1,list("DE","DS","EBSEQ","SEVA","DiffSplice")))
+#DE genes
+VennDiag[DEGenes,"DE"] <- 1
+#DS genes
+VennDiag[DSGenes,"DS"] <- 1
+
+#DE genes
+#VennDiag[DEGenes_EBesq,"EBSEQ"] <- 1
+#DS genes
+VennDiag[DSEBseq,"EBSEQ"] <- 1
+
+
+#OnlyGenesGroundTruth <- c(names(neutralgenes),names(DEnonDS),names(DEDS),names(nonDEDS))
+vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","EBSEQ")])
+vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DS","EBSEQ")])
+vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","EBSEQ")])
+#vennDiagram(VennDiag)
+
+
+
+
+VennDiag[intersect(SEVA,genesChr1),"SEVA"] <-  1
+vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","SEVA")])
+
+vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","EBSEQ")])
+
+Venn4Percentage <- vector(mode = "list",length = length(experimentSamplesTumors))
+```
+
+
+Applying DiffSplice requires a lot of time and recources. So, we applied them offline to the simulated data.
+```{r loading_diffsplice_results,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+
+diffspliceFiles <- dir("../Results/Simulation/DiffSplice/")
+
+#ebseqpvalueAll <- vector(mode = "list",length = length(experimentSamplesTumors))
+ebseqpvalueGenesAll <- vector(mode = "list",length = length(experimentSamplesTumors))
+```
+
+We apply with all three to different number of disrupted samples.
+```{r different_disrupted_samples,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE,fig.show='asis',fig.keep='all',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+
+for( i in seq_along(experimentSamplesTumors)){
+  #current samples: Normals as nomral with a mixture of normal and cancerous as the cancer samples
+  samplescur <- c(NormalLabels,experimentSamplesTumors[[i]])
+  #phenotype
+  phenotypescur <- sapply(strsplit(samplescur,split = "_"),FUN = function(x) x[3])
+  names(phenotypescur) <- samplescur[names(phenotypescur)]
+#   junctionPValue <- GSReg.GeneSets.EVA(geneexpres = junc.RPMext[,samplescur],
+#                                         phenotypes = as.factor(phenotypescur), 
+#                                         minGeneNum = 2,
+#                                         pathways = genesJunction[intersect(names(which(sapply(genesJunction ,length) >2)),allgroundgenes)],
+#                                         distFunc = GSReg.kendall.tau.distance.Restricted,
+#                                         distparamPathways = MyRest  )
+  
+  # junctionPValue <- SEVA.meangeneFilter(juncExprs=junc.RPMext[,samplescur],
+  #                                       phenoVect=as.factor(phenotypescur),
+  #                                       geneexpr=geneexp,minmeanloggeneexp= 0)
+  # 
+   junctionPValue <- GSReg.SEVA(juncExprs=junc.RPMext[,samplescur],
+                                        phenoVect=as.factor(phenotypescur),
+                                        verbose = F,
+                                        geneexpr=geneexp,minmeanloggeneexp= 0)
+
+  SEVA <- names(which(sapply(junctionPValue,function(x) x$pvalue)<0.01))
+  
+  
+  zscoresSEVA <- sapply(junctionPValue,FUN = function(x) abs(x$zscore))
+  
+#  zscoresSEVA <- sapply(junctionPValue,FUN = function(x) max(abs(c(x$zscore,x$zscoreD12D1,x$zscoreD12D2))))
+
+  DSEBseq_outcome <- findDSEBSEQ(isoexprext[,samplescur],
+                                 isos2genesvectsimplified,
+                                 phenoVect =as.factor(phenotypescur) )
+  
+  DSEBseq <- DSEBseq_outcome$DSEBseq
+  
+  
+  ebseqpvalueGenes <- DSEBseq_outcome$pvaluescorrected 
+  ebseqpvalueGenesAll[[i]] <- ebseqpvalueGenes
+ 
+  
+  
+  
+  
+  
+  VennDiag <- matrix(0,nrow = length(OnlyGenesGroundTruth),ncol = 5, 
+                     dimnames = list(OnlyGenesGroundTruth,c("DE","DS","EBSEQ","SEVA","DiffSplice")))
+  
+  #DE genes
+  VennDiag[DEGenes,"DE"] <- 1
+  #DS genes
+  VennDiag[DSGenes,"DS"] <- 1
+  #DSStatus[DSGenes] <- 1
+  
+  VennDiag[intersect(SEVA,OnlyGenesGroundTruth),"SEVA"] <-  1
+  VennDiag[intersect(OnlyGenesGroundTruth,DSEBseq),"EBSEQ"] <- 1 
+  
+  
+
+  ###Diffsplice Results
+  tumorsampleNum <- strsplit(x = names(experimentSamplesTumors)[i], split = " perturbed samples")[[1]][1]
+  transDiffSplice <- read.delim(
+    paste("C:/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Results/Simulation/DiffSplice/ResultsSim",
+          tumorsampleNum,"/differential_transcription.txt",sep = ""))
+  
+  signtransDiffSplice <- which(transDiffSplice[,"significant"]=="yes")
+  
+  transDiffSpliceGRanges <- GRanges(seqnames = transDiffSplice[signtransDiffSplice,"chromosome"], 
+                                    ranges = IRanges(start = transDiffSplice[signtransDiffSplice,"position_start"], 
+                                                     end = transDiffSplice[signtransDiffSplice,"position_end"]))
+  
+  overlapDiffSplice <- findOverlaps(transDiffSpliceGRanges,gn)
+  
+# VennDiag[,"DiffSplice"] <- 0
+  VennDiag[intersect(rownames(VennDiag),
+                     unique(na.omit(gn$SYMBOL[subjectHits(overlapDiffSplice)]))),
+           "DiffSplice"] <- 1
+  
+  
+  
+  Venn4Percentage[[i]] <- VennDiag
+  vennDiagram(VennDiag[,c("DE","DS","SEVA")])
+  title(paste(names(experimentSamplesTumors)[i],
+              "\nNull: DE and SEVA are independent\n (p-value ",
+            signif(fisher.test(VennDiag[,"DE"],
+                               VennDiag[,"SEVA"])$"p.value",
+                   digits = 2),")"))
+
+  vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","EBSEQ")])
+  
+  title(paste(names(experimentSamplesTumors)[i],
+              "\nNull: DE and EBSEQ are independent\n (p-value ",
+            signif(fisher.test(VennDiag[OnlyGenesGroundTruth,"DE"],
+                               VennDiag[OnlyGenesGroundTruth,"EBSEQ"])$"p.value",
+                   digits = 2),")"))
+
+  
+  
+ 
+  
+  vennDiagram(VennDiag[OnlyGenesGroundTruth,c("DE","DS","DiffSplice")])
+  title(paste(names(experimentSamplesTumors)[i],
+              "\nNull: DE and DiffSplice are independent\n (p-value ",
+            signif(fisher.test(VennDiag[OnlyGenesGroundTruth,"DE"],
+                               VennDiag[OnlyGenesGroundTruth,"DiffSplice"])$"p.value",
+                   digits = 2),")"))
+  
+
+  
+
+  #required for precision recall curve
+  DSStatus <- vector(mode = "numeric",length = length(OnlyGenesGroundTruth))
+  names(DSStatus) <- OnlyGenesGroundTruth
+  DSStatus[DSGenes] <- 1
+  
+  
+  
+  DSStatusofDE <- vector(mode = "numeric",length = length(DEGenes))
+  names(DSStatusofDE) <- DEGenes
+  DSStatusofDE[DEDSGenes] <- 1
+  
+  
+  diffcurves <- list(precrec = c("prec","rec","bottomleft"),
+           tfpr = c("rec","fpr","bottomright"),
+           senspec = c("rec","tnr","bottomleft"))#different types of curves
+  for( j in seq_along(diffcurves)){
+  
+    myz <- vector(mode = "numeric",length = length(DSStatus))
+    names(myz) <- names(DSStatus)
+    myz[intersect(names(DSStatus),names(zscoresSEVA))] <- zscoresSEVA[intersect(names(DSStatus),names(zscoresSEVA))]
+    
+    pred1 <- prediction( myz, DSStatus)
+    perf1 <- performance(pred1, diffcurves[[j]][1], diffcurves[[j]][2])
+    plot(perf1, lty =1, col="dark red")
+
+    myz <- vector(mode = "numeric",length = length(DSStatusofDE))
+    names(myz) <- names(DSStatusofDE)
+    myz[intersect(names(DSStatusofDE),names(zscoresSEVA))] <- zscoresSEVA[intersect(names(DSStatusofDE),names(zscoresSEVA))]
+    
+    
+    pred2 <- prediction( myz, DSStatusofDE)
+    perf2 <- performance(pred2,  diffcurves[[j]][1], diffcurves[[j]][2])
+    lines(perf2@x.values[[1]],perf2@y.values[[1]], lty =2, col="dark red")
+    
+
+    myz <- vector(mode = "numeric",length = length(DSStatus))
+    names(myz) <- names(DSStatus)
+    myz[intersect(names(DSStatus),names(ebseqpvalueGenes))] <- ebseqpvalueGenes[intersect(names(DSStatus),names(ebseqpvalueGenes))]
+    
+    
+    pred3 <- prediction( myz, DSStatus)
+    perf3 <- performance(pred3,  diffcurves[[j]][1], diffcurves[[j]][2])
+    lines(perf3@x.values[[1]],perf3@y.values[[1]], lty =1, col="blue")
+    
+    myz <- vector(mode = "numeric",length = length(DSStatusofDE))
+    names(myz) <- names(DSStatusofDE)
+    myz[intersect(names(DSStatusofDE),names(ebseqpvalueGenes))] <- ebseqpvalueGenes[intersect(names(DSStatusofDE),names(ebseqpvalueGenes))]
+    
+    
+    
+    pred4 <- prediction( myz, DSStatusofDE)
+    perf4 <- performance(pred4,  diffcurves[[j]][1], diffcurves[[j]][2])
+    lines(perf4@x.values[[1]],perf4@y.values[[1]], lty =2, col="blue")
+    
+    legend(diffcurves[[j]][3],legend = c("SEVA","EBSEQ","SEVA DE","EBSEQ DE"),
+           col=c("dark red","blue","dark red","blue"), 
+           text.col = c("dark red","blue","dark red","blue"),
+           lty = c(1,1,2,2)     )
+    
+
+    
+    }
+  
+  
+  
+  
+  
+  
+
+ 
+}
+
+#ploting sens and spec vs samp size for different methods
+sampNum <- as.numeric(sapply(strsplit(names(experimentSamplesTumors),split = " "), function(x) x[1]))
+DSMethods <- c("SEVA","EBSEQ","DiffSplice")
+precisionall <- vector(mode = "list",length = length(DSMethods))
+names(precisionall) <- DSMethods
+recallall <- precisionall
+precisionDEall <- precisionall
+recallDEall <- recallall
+specall <- recallall
+specDEall <- recallall
+
+
+
+
+
+
+for( j in seq_along(DSMethods)){
+  precision <- vector(mode = "numeric", length(experimentSamplesTumors))
+  recall <- vector(mode = "numeric", length(experimentSamplesTumors))
+  precisionDE <- vector(mode = "numeric", length(experimentSamplesTumors))
+  recallDE <- vector(mode = "numeric", length(experimentSamplesTumors))
+  spec <- vector(mode = "numeric", length(experimentSamplesTumors))
+  specDE <- vector(mode = "numeric", length(experimentSamplesTumors))
+  
+  
+    for( i in seq_along(experimentSamplesTumors))
+    {
+      
+      
+      
+      DSDEGenes <- names(DEDS)
+      
+      recall[i] <- sum(Venn4Percentage[[i]][DSGenes,DSMethods[j]])/length(DSGenes)
+      precision[i] <- sum(Venn4Percentage[[i]][DSGenes,DSMethods[j]])/sum(Venn4Percentage[[i]][OnlyGenesGroundTruth,DSMethods[j]])
+      spec[i] <- 1-mean(Venn4Percentage[[i]][setdiff(OnlyGenesGroundTruth,DSGenes),DSMethods[j]])
+      
+      recallDE[i]<- sum(Venn4Percentage[[i]][DSDEGenes,DSMethods[j]])/length(DEDSGenes)
+      precisionDE[i] <- sum(Venn4Percentage[[i]][DSDEGenes,DSMethods[j]])/sum(Venn4Percentage[[i]][DEGenes,DSMethods[j]])      
+      specDE[i] <- 1-mean(Venn4Percentage[[i]][setdiff(DEGenes,DSGenes),DSMethods[j]])
+      
+      
+      
+    }
+  precisionall[[DSMethods[j]]] <- precision
+  recallall[[DSMethods[j]]] <- recall
+  specall[[DSMethods[j]]] <- spec
+  
+  precisionDEall[[DSMethods[j]]] <- precisionDE
+  recallDEall[[DSMethods[j]]] <- recallDE
+  specDEall[[DSMethods[j]]] <- specDE
+  
+  
+  
+  
+}
+plot(x= sampNum, y= precisionall[["SEVA"]], xlab="", ylab= "", main = "Precision", type="l",col="dark red", ylim = c(0,1),pch=1)
+lines(x= sampNum, y= precisionall[["EBSEQ"]],col="blue",lty=1,pch=1)
+lines(x= sampNum, y= precisionall[["DiffSplice"]],col="green",lty=1,pch=1)
+
+lines(x= sampNum, y= precisionDEall[["SEVA"]],col="dark red",lty=2,pch=2)
+lines(x= sampNum, y= precisionDEall[["EBSEQ"]],col="blue",lty=2,pch=2)
+lines(x= sampNum, y= precisionDEall[["DiffSplice"]],col="green",lty=2,pch=2)
+
+legend("bottomright",legend = c("SEVA","EBSEQ","DiffSplice","SEVA DE","EBSEQ DE","DiffSplice DE"),
+            col=c("dark red","blue","green","dark red","blue","green"), 
+            text.col = c("dark red","blue","green","dark red","blue","green"),
+       lty = c(1,1,1,2,2,2)     )
+
+
+plot(x= sampNum, y= recallall[["SEVA"]], xlab="", ylab= "", main = "Recall", type="l",col="dark red", ylim = c(0,1),pch=1)
+lines(x= sampNum, y= recallall[["EBSEQ"]],col="blue",lty=1,pch=1)
+lines(x= sampNum, y= recallall[["DiffSplice"]],col="green",lty=1,pch=1)
+
+lines(x= sampNum, y= recallDEall[["SEVA"]],col="dark red",lty=2,pch=2)
+lines(x= sampNum, y= recallDEall[["EBSEQ"]],col="blue",lty=2,pch=2)
+lines(x= sampNum, y= recallDEall[["DiffSplice"]],col="green",lty=2,pch=2)
+
+legend("bottomright",legend = c("SEVA","EBSEQ","DiffSplice","SEVA DE","EBSEQ DE","DiffSplice DE"),
+       col=c("dark red","blue","green","dark red","blue","green"), 
+       text.col = c("dark red","blue","green","dark red","blue","green"),
+       lty = c(1,1,1,2,2,2)     )
+
+plot(x= sampNum, y= recallall[["SEVA"]], xlab="", ylab= "", main = "Recall", type="l",col="dark red", ylim = c(0,1),pch=1)
+lines(x= sampNum, y= recallall[["EBSEQ"]],col="blue",lty=1,pch=1)
+lines(x= sampNum, y= recallall[["DiffSplice"]],col="green",lty=1,pch=1)
+
+lines(x= sampNum, y= recallDEall[["SEVA"]],col="dark red",lty=2,pch=2)
+lines(x= sampNum, y= recallDEall[["EBSEQ"]],col="blue",lty=2,pch=2)
+lines(x= sampNum, y= recallDEall[["DiffSplice"]],col="green",lty=2,pch=2)
+
+legend("bottomright",legend = c("SEVA","EBSEQ","DiffSplice","SEVA DE","EBSEQ DE","DiffSplice DE"),
+       col=c("dark red","blue","green","dark red","blue","green"), 
+       text.col = c("dark red","blue","green","dark red","blue","green"),
+       lty = c(1,1,1,2,2,2)     )
+
+
+plot(x= sampNum, y= specall[["SEVA"]], xlab="", ylab= "", main = "True Negative Rate", type="l",col="dark red", ylim = c(0,1),pch=1)
+lines(x= sampNum, y= specall[["EBSEQ"]],col="blue",lty=1,pch=1)
+lines(x= sampNum, y= specall[["DiffSplice"]],col="green",lty=1,pch=1)
+
+lines(x= sampNum, y= specDEall[["SEVA"]],col="dark red",lty=2,pch=2)
+lines(x= sampNum, y= specDEall[["EBSEQ"]],col="blue",lty=2,pch=2)
+lines(x= sampNum, y= specDEall[["DiffSplice"]],col="green",lty=2,pch=2)
+
+legend("bottomright",legend = c("SEVA","EBSEQ","DiffSplice","SEVA DE","EBSEQ DE","DiffSplice DE"),
+       col=c("dark red","blue","green","dark red","blue","green"), 
+       text.col = c("dark red","blue","green","dark red","blue","green"),
+       lty = c(1,1,1,2,2,2)     )
+
+
+
+genesToVisualize <- c(names(which(DSStatusofDE==0))[1:10],
+           names(which(DSStatusofDE==1))[1:10],             
+           names(which(DSStatus[setdiff(names(DSStatus),names(DSStatusofDE))]==0))[1:10],
+           names(which(DSStatus[setdiff(names(DSStatus),names(DSStatusofDE))]==1))[1:10])
+
+genesType <- c(rep("DE-nonDS",10),
+               rep("DE-DS",10),
+               rep("neutral",10),
+               rep("nonDE-DS",10))
+
+samplescur <- c(NormalLabels,experimentSamplesTumors[[3]])
+
+
+for( i in seq_along(genesToVisualize)){
+  matplot( log2(t(isoexprext[names(which(isos2genesvectsimplified==genesToVisualize[i])),samplescur])+1),
+           lty=1,type = "l", 
+           ylab = "isoform Expression (log2)",
+           xlab="samples",
+           #main=paste(genesToVisualize[i]," (",genesType[i],")",sep = ""))
+           main=genesType[i])
+  lines(x=c(25,25),y=range(log2(t(isoexprext[names(which(isos2genesvectsimplified==genesToVisualize[i])),samplescur])+1))+c(0,1),lty=2)
+  
+}
+
+       
+save(list=ls(),file = "../Cache/All.rda")
+
+
+```
