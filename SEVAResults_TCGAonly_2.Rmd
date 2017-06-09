@@ -1,0 +1,152 @@
+---
+title: "Supplement: Splice Expression Variation Analysis (SEVA): Variability Analysis to Detect Significant Alternative Splicing Events (TCGA Analysis only)"
+author: "Bahman Afsari"
+date: "Sunday, June 12, 2016"
+output: 
+  pdf_document: 
+    number_sections: yes
+---
+
+# Loading the real data
+
+First, we load the data as: 
+```{r loading_data,eval=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,message=FALSE}
+library('Homo.sapiens')
+library('org.Hs.eg.db')
+library('GenomicRanges')
+library("GSReg")
+library(EBSeq)
+library(limma)
+library('gplots')
+library(ggplot2)
+library('ROCR')
+library(Matrix)
+library(qvalue)
+
+
+
+```
+
+
+
+# Cross-study Validation with TCGA
+
+Now, we cross-study the genes we identified using TCGA as the tes-set. (For memory issues we run SEVA on the batches of 1000 genes and augmented the results)
+```{r TCGA_SEVA_Cross_study,eval=TRUE,echo=TRUE}
+
+
+
+#####################################33
+### TCGA 
+##
+### loading data
+#########################
+
+
+
+load("../Data/TCGA/HPVPosTCGAJuncRPM_25Aug2015_Pheno.Rda")
+load("../Data/TCGA/TCGA_RSEM_processed_091615.RDa")
+load(file = "../Cache/ForTCGAAnalysis.rda")
+
+
+TCGA.RSEM <- as.matrix(TCGA.RSEM)
+
+#We divide the TCGA data to batches of 1000 genes to make it manageable
+junctionPValueTCGAaug <- c()
+for( i in 1:14){
+  
+  junctionPValueTCGA <- GSReg.SEVA(junc.RPM=junc.RPM.TCGA,
+                                                                      phenoVect=as.factor(phenoVect.TCGA),
+                                   sparse = T, 
+                                   verbose = F,
+                                   geneexpr=TCGA.RSEM, 
+                                   minmeanloggeneexp= 3,
+                                   GenestoStudy = 
+                                            as.vector(na.omit(intersect(names(junctionPValue),
+                                                                   rownames(TCGA.RSEM))
+                                                              [(1:1000)+i*1000])))
+
+  
+  gc()
+  junctionPValueTCGAaug <- c(junctionPValueTCGAaug,junctionPValueTCGA)
+}
+
+
+save(list=c("junctionPValueTCGA","junctionPValueTCGAaug"),
+     file = "../Cache/junctionPValueTCGA.rda")
+
+
+
+
+```
+
+Now, checking if the genes identified on the original data generates enriched p-values on the TCGA data.
+```{r TCGA_SEVA_Cross_study_significance=TRUE,echo=TRUE,cache=FALSE,warning=FALSE,mesbage=FALSE,fig.show='asis',dev=c('pdf', 'png'),fig.path="figure/fig",fig.width=7, fig.height=7}
+load(file = "../Cache/junctionPValueTCGA.rda")
+load(file = "../Cache/SEVAJoe.rda")
+
+
+#Pvalues based on  the original data (Training data a.k.a. Joe's Data) 
+originaldatapval <- sapply(junctionPValue,function(x) x$pvalue) #All P-values on the Training set
+hist(x = originaldatapval, 
+     xlab="P-Value",main=paste("P-Values calculated on training data"))
+
+
+SEVATCGAGenes <- intersect(names(junctionPValueTCGAaug),
+                                      SEVAGenesPure)
+
+
+tcgaallpvals <- sapply(X = junctionPValueTCGAaug,FUN = function(x) x$pvalue)
+
+hist(x = tcgaallpvals, 
+     xlab="P-Value",main=paste("P-Values calculated on test (TCGA) data"))
+
+
+print(cor.test(tcgaallpvals,originaldatapval[names(tcgaallpvals)],method = "spearman"))
+
+
+tcgapval <- sapply(junctionPValueTCGAaug[SEVATCGAGenes],function(x) x$pvalue)
+
+
+hist(x = tcgapval[SEVATCGAGenes], 
+     xlab="P-Value",main=
+       paste("P-Values calculated on test for genes identified from training data"))
+
+cat("percentage that survived on test", 
+    mean(tcgapval<0.01/length(tcgapval)))
+
+
+cat("Quatile of the p-value distribution SEVA genes using TCGA data")
+print(quantile(tcgapval))
+
+
+
+tcgaallpvals <- sapply(X = junctionPValueTCGAaug,FUN = function(x) x$pvalue)
+
+cat("Enrichment of the p-values on the test data for the genes identified from training.")
+wilcox.test(index=SEVATCGAGenes,
+            sapply(junctionPValueTCGAaug,function(x) abs(x$zscore)),
+            alternative = "greater")
+
+
+plot(originaldatapval[names(tcgapval)],
+     tcgapval,
+     ylab = "P-Value on Test",
+     xlab = "P-VAlue on Training",
+     main ="Cross-study P-Values")
+
+
+
+
+cat("Quatile of the p-value distribution random genes using TCGA data")
+print(quantile(tcgaallpvals))
+
+
+
+#print(wilcox.test(x=tcgapval,y=tcgaallpvals,alternative = "less",conf.int = T,conf.level = 0.95))
+
+
+save(list=ls(),file = "../Cache/SEVATCGA.rda")
+```
+
+
