@@ -32,7 +32,7 @@ library(Matrix)
 # Cross-study Validation with TCGA
 
 Now, we cross-study the genes we identified using TCGA as the tes-set. (For memory issues we run SEVA on the batches of 1000 genes and augmented the results)
-```{r TCGA_SEVA_Cross_study,eval=TRUE,echo=TRUE}
+```{r TCGA_SEVA_Cross_study,eval=FALSE,echo=TRUE}
 
 
 
@@ -47,7 +47,7 @@ Now, we cross-study the genes we identified using TCGA as the tes-set. (For memo
 load("../Data/TCGA/HPVPosTCGAJuncRPM_25Aug2015_Pheno.Rda")
 load("../Data/TCGA/TCGA_RSEM_processed_091615.RDa")
 load(file = "../Cache/ForTCGAAnalysis.rda")
-
+source("../Scripts/functions.R") #loading the functions for analysis
 
 TCGA.RSEM <- as.matrix(TCGA.RSEM)
 
@@ -55,17 +55,25 @@ TCGA.RSEM <- as.matrix(TCGA.RSEM)
 junctionPValueTCGAaug <- c()
 for( i in 1:14){
   
-  junctionPValueTCGA <- GSReg.SEVA(juncExprs = junc.RPM.TCGA,
-                                                                      phenoVect=as.factor(phenoVect.TCGA),
-                                   sparse = T, 
-                                   verbose = F,
+  # junctionPValueTCGA <- GSReg.SEVA(juncExprs = junc.RPM.TCGA,
+  #                                                                     phenoVect=as.factor(phenoVect.TCGA),
+  #                                  sparse = T, 
+  #                                  verbose = F,
+  #                                  geneexpr=TCGA.RSEM, 
+  #                                  minmeanloggeneexp= 3,
+  #                                  GenestoStudy = 
+  #                                           as.vector(na.omit(intersect(names(junctionPValue),
+  #                                                                  rownames(TCGA.RSEM))
+  #                                                             [(1:1000)+i*1000])))
+
+  junctionPValueTCGA <- SEVA.meangeneFilter(junc.RPM =   junc.RPM.TCGA,
+                                    phenoVect=as.factor(phenoVect.TCGA),
                                    geneexpr=TCGA.RSEM, 
                                    minmeanloggeneexp= 3,
                                    GenestoStudy = 
                                             as.vector(na.omit(intersect(names(junctionPValue),
                                                                    rownames(TCGA.RSEM))
                                                               [(1:1000)+i*1000])))
-
   
   gc()
   junctionPValueTCGAaug <- c(junctionPValueTCGAaug,junctionPValueTCGA)
@@ -112,8 +120,15 @@ hist(x = tcgapval[SEVATCGAGenes],
      xlab="P-Value",main=
        paste("P-Values calculated on test for genes identified from training data"))
 
+cat("#Genes survived on the Gou data and were expressed in TCGA", 
+    length(tcgapval))
+
+cat("#Genes did not survive on the Gou data and were expressed in TCGA",length(setdiff(SEVAGenesPure,names(junctionPValueTCGAaug)))
+)
+cat("Number of Genes that survived on test", 
+    sum(p.adjust(tcgapval,"BH")<0.01))
 cat("percentage that survived on test", 
-    mean(tcgapval<0.01/length(tcgapval)))
+    mean(p.adjust(tcgapval,"BH")<0.01))
 
 
 cat("Quatile of the p-value distribution SEVA genes using TCGA data")
