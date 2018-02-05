@@ -10,14 +10,14 @@ library(GenomicFeatures)
 
 
 #loading isoform informations
-load("/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Data/JoeData/isoforms.rda")
+load("isoforms.rda")
 #transfer to log 2.
 log2isos <- log2(isos+1)
 #hist(apply(log2isos[,normsamp],MARGIN=1,mean))
 # calculating means
 
 txdb <- makeTxDbFromGFF(
-  file="/Users/bahman/Documents/Postdoc Research/EVA/SimulatedData/unc_hg19.gtf.txt",
+  file="unc_hg19.gtf.txt",
   format = "gtf") 
 
 
@@ -31,7 +31,7 @@ readnumaveall <- rowMeans(log2isos)
 expressediso <- names(which(readnumaveall>3))
 
 isos2genes <- read.delim(
-  "/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Scripts/Simulation/unc_knownToLocus.txt",
+  "unc_knownToLocus.txt",
                          header=F,sep="\t")
 
 
@@ -175,76 +175,3 @@ print(proc.time()-ptm)
 
 #}
 ##### End simulation 
-
-# simulate_experiment_countmat( fasta=small_myfasta,readmat= fold_changes[names(myfasta)[1:200],]/100, 
-#                      outdir='/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Results/Simulation/FirstNiormals')
-# 
-# 
-# #Three classes: The way we go
-# load("/Users/bahman/Dropbox/SEVApaper/PaperSuppl/Data/JoeData/pvalAlpha.rda.RData")
-# fold_changes = matrix(c(4,4,rep(1,18),1,1,4,4,rep(1,16),1.5,1.5,4,4,rep(2,16)), nrow=20)
-# head(fold_changes)
-# 
-# 
-# # FASTA annotation
-# fasta_file = system.file('extdata', 'chr22.fa', package='polyester')
-# fasta = readDNAStringSet(fasta_file)
-# 
-# 
-# 
-# 
-# 
-# genetransmap <- read.csv(file='/Users/bahman/Documents/Postdoc Research/EVA/SimulatedData/mygenome/unc_knownToLocus.txt',
-#                          sep="\t")
-# 
-# 
-# # subset the FASTA file to first 20 transcripts
-# small_fasta = fasta[1:20]
-# writeXStringSet(small_fasta, 'chr22_small.fa')
-# 
-# # ~20x coverage ----> reads per transcript = transcriptlength/readlength * 20
-# # here all transcripts will have ~equal FPKM
-# readspertx = round(20 * width(small_fasta) / 100)
-# 
-# # simulation call:
-# simulate_experiment('chr22_small.fa', reads_per_transcript=readspertx, 
-#                     num_reps=c(10,10,3), fold_changes=fold_changes, outdir='/Users/bahman/simulated_reads')
-# 
-# 
-# ### If we can generate the exact read-counts
-# # set up transcript-by-timepoint matrix:
-# num_timepoints = 12
-# countmat = matrix(readspertx, nrow=length(small_fasta), ncol=num_timepoints)
-# 
-# # add spikes in expression at certain timepoints to certain transcripts:
-# up_early = c(1,2) 
-# up_late = c(3,4)
-# countmat[up_early, 2] = 3*countmat[up_early, 2]
-# countmat[up_early, 3] = round(1.5*countmat[up_early, 3])
-# countmat[up_late, 10] = 6*countmat[up_late, 10]
-# countmat[up_late, 11] = round(1.2*countmat[up_late, 11])
-# 
-# # simulate reads:
-# simulate_experiment_countmat('chr22_small.fa', readmat=countmat, 
-#                              outdir='timecourse_reads') 
-# 
-# #### simulation of experiment
-# source("http://bioconductor.org/biocLite.R")
-# biocLite("ballgown")
-# 
-# library(ballgown)
-# data(bg)
-# bg = subset(bg, "chr=='22'")
-# 
-# # load gtf file for annotation:
-# gtfpath = system.file('extdata', 'bg.gtf.gz', package='polyester')
-# gtf = subset(gffRead(gtfpath), seqname=='22')
-# 
-# # load chromosome sequence corresponding to gtf file (just for this example)
-# system('wget https://www.dropbox.com/s/04i6msi9vu2snif/chr22seq.rda')
-# load('chr22seq.rda')
-# names(chr22seq) = '22'
-# 
-# # simulate reads based on this experiment's FPKMs
-# simulate_experiment_empirical(bg, grouplabels=pData(bg)$group, gtf=gtf,
-#                               seqpath=chr22seq, mean_rps=5000, outdir='empirical_reads', seed=1247)
